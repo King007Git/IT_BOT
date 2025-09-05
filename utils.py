@@ -15,28 +15,31 @@ from langgraph.checkpoint.memory import MemorySaver
 from typing import List
 import os
 import asyncio
+import asyncio
+import sys
 
 FOLDER_PATH = "Docs"
 load_dotenv()
 
 llm = init_chat_model("gemini-2.5-flash", model_provider="google_genai")
 
-# --- Helpers ---
-def get_embeddings():
-    """Ensure an asyncio loop exists before creating embeddings."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:  # no loop in this thread
-        asyncio.set_event_loop(asyncio.new_event_loop())
-    return GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-def get_vector_store():
-    embeddings = get_embeddings()
-    return Chroma(
-        collection_name="it_operations",
-        embedding_function=embeddings,
-        persist_directory="./chroma_db",
-    )
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+
+embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+
+vector_store = Chroma(
+    collection_name="it_operations",
+    embedding_function=embeddings,
+    persist_directory="./chroma_db",
+)
 
 # --- Document Loader ---
 def _load_documents(folder_path: str) -> List[Document]:
@@ -58,7 +61,6 @@ def create_index_documents():
     docs = _load_documents(FOLDER_PATH)
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     all_splits = text_splitter.split_documents(docs)
-    vector_store = get_vector_store()
     vector_store.add_documents(documents=all_splits)
 
 
@@ -74,7 +76,7 @@ graph_builder = StateGraph(MessagesState)
 @tool(response_format="content_and_artifact")
 def retrieve(query: str):
     """Retrieve information related to a query."""
-    retrieved_docs = get_vector_store.similarity_search(query, k=2)
+    retrieved_docs = vector_store.similarity_search(query, k=2)
     serialized = "\n\n".join(
         (f"Source: {doc.metadata}\n" f"Content: {doc.page_content}")
         for doc in retrieved_docs
