@@ -1,0 +1,91 @@
+import streamlit as st
+from utils import create_index_documents, get_rag_chain
+import asyncio
+
+st.set_page_config(
+    page_title="IT Bot",
+    page_icon="📊",
+    layout="wide"
+)
+st.markdown("""
+    <style>
+        div.block-container {
+            padding-top: 0rem;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+left_col, right_col = st.columns([5, 1])
+with left_col:
+    st.title("IT Operations Bot")
+
+with right_col:
+    col1, col2 = st.columns([1, 1])  # two equal-width columns
+
+    with col1:
+        if st.button("Create Index"):
+            with st.spinner("Indexing documents..."):
+                create_index_documents()
+            st.toast("Index is created")
+
+    with col2:
+        if st.button("Clear", type="tertiary"):
+            st.session_state.messages = []
+            st.toast("Chat is cleared")
+            st.rerun()
+
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+prompt = st.chat_input("Ask me something about IT operations...")
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        rag_chain = get_rag_chain()
+
+
+        chat_history = []
+        if "messages" in st.session_state:
+            for msg in st.session_state.messages:
+                pass
+        if "full_response" not in st.session_state:
+            st.session_state.full_response = ""
+        if "docs" not in st.session_state:
+            st.session_state.docs = []
+        print(rag_chain.invoke({
+            "input": prompt,
+            "chat_history": chat_history
+        }))
+
+        async def stream_response():
+            async for chunk in rag_chain.astream({
+                "input": prompt,
+                "chat_history": chat_history
+            }):
+                if "answer" in chunk:
+                    st.session_state.full_response += chunk["answer"]
+                    placeholder.markdown(st.session_state.full_response + "▌")
+
+                if "context" in chunk:
+                    for d in chunk["context"]:
+                        if d not in st.session_state.docs:
+                            st.session_state.docs.append(d)
+            if st.session_state.docs:
+                docs_list = []
+                for i in st.session_state.docs:
+                    docs_list.append(i.metadata.get('source'))
+                docs_str = ", ".join(docs_list)
+                placeholder.markdown(
+                    f"{st.session_state.full_response}\n\n"
+                    f"- citations:\t\t {docs_str}" 
+                )
+            else:                
+                placeholder.markdown(st.session_state.full_response)
+        with st.spinner("Thinking..."):  
+            asyncio.run(stream_response())
+    st.session_state.messages.append({"role": "assistant", "content": st.session_state.full_response})

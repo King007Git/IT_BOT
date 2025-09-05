@@ -1,0 +1,40 @@
+# Ignore Python cache and compiled files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pkl
+
+# Ignore virtual environment
+env/
+.venv/
+venv/
+ENV/
+
+chroma_db/
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore Streamlit's local config and logs
+.streamlit/
+
+# Ignore logs
+*.log
+
+# Ignore build artifacts
+build/
+dist/
+*.egg-info/
+
+# Ignore coverage and test files
+.coverage
+.pytest_cache/
+htmlcov/
+
+
+.env

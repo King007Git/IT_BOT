@@ -1,0 +1,99 @@
+from dotenv import load_dotenv
+from langchain.chat_models import init_chat_model
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_chroma import Chroma
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from typing import List
+import os
+import asyncio
+
+FOLDER_PATH = "Docs"
+load_dotenv()
+
+# --- Helpers ---
+def get_embeddings():
+    """Ensure an asyncio loop exists before creating embeddings."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:  # no loop in this thread
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    return GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+
+def get_vector_store():
+    embeddings = get_embeddings()
+    return Chroma(
+        collection_name="it_operations",
+        embedding_function=embeddings,
+        persist_directory="./chroma_db",
+    )
+
+def get_retriever():
+    vector_store = get_vector_store()
+    return vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 2})
+
+# --- Document Loader ---
+def _load_documents(folder_path: str) -> List[Document]:
+    documents = []
+    for filename in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, filename)
+        if filename.endswith(".pdf"):
+            loader = PyPDFLoader(file_path)
+        elif filename.endswith(".docx"):
+            loader = Docx2txtLoader(file_path)
+        else:
+            print(f"Unsupported file type: {filename}")
+            continue
+        documents.extend(loader.load())
+    return documents
+
+def create_index_documents():
+    """Load, split, and add docs into Chroma."""
+    docs = _load_documents(FOLDER_PATH)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    all_splits = text_splitter.split_documents(docs)
+    vector_store = get_vector_store()
+    vector_store.add_documents(documents=all_splits)
+
+# --- Prompts ---
+contextualize_q_system_prompt = (
+    "Given a chat history and the latest user question "
+    "which might reference context in the chat history, "
+    "formulate a standalone question which can be understood "
+    "without the chat history. Do NOT answer the question, "
+    "just reformulate it if needed and otherwise return it as is."
+)
+
+contextualize_q_prompt = ChatPromptTemplate.from_messages([
+    ("system", contextualize_q_system_prompt),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
+])
+
+System_Prompt =(
+    "You are an assistant for answering IT Operations questions"
+    "Use the following pieces of retrieved context to answer the question."
+    "Answer in a Detail way with markdown format."
+    "If you don't know the answer, just say that you don't know."
+    "Note: Please make sure to answer in a Markdown Format with Heading as title."
+)
+
+qa_prompt = ChatPromptTemplate.from_messages([
+    ("system", System_Prompt),
+    ("system", "Context: {context}"),
+    MessagesPlaceholder(variable_name="chat_history"),
+    ("human", "{input}")
+])
+
+def get_rag_chain():
+    retriever = get_retriever()
+    llm = init_chat_model("gemini-2.5-flash", model_provider="google_genai")
+
+    history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
+    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+    return rag_chain
